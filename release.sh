@@ -10,21 +10,15 @@ else
 fi
 
 if [ -z "$2" ]; then
-    read -p "Android version (5.0.1|5.1.1|6.0|7.0|7.1.1|all): " ANDROID_VERSION
+    read -p "Android version (5.0.1|5.1.1|6.0|7.0|7.1.1|8.0|8.1|all): " ANDROID_VERSION
 else
     ANDROID_VERSION=$2
 fi
 
 if [ -z "$3" ]; then
-    read -p "Processor type (x86|arm|all): " PROCESSOR
-else
-    PROCESSOR=$3
-fi
-
-if [ -z "$4" ]; then
     read -p "Release version: " RELEASE
 else
-    RELEASE=$4
+    RELEASE=$3
 fi
 
 declare -A list_of_levels=(
@@ -33,11 +27,8 @@ declare -A list_of_levels=(
         [6.0]=23
         [7.0]=24
         [7.1.1]=25
-)
-
-declare -A list_of_processors=(
-        [arm]=armeabi-v7a
-        [x86]=x86_64
+        [8.0]=26
+        [8.1]=27
 )
 
 function get_android_versions() {
@@ -57,46 +48,25 @@ function get_android_versions() {
 
     # If version cannot be found in the list
     if [ -z "$versions" ]; then
-        echo "Android version \"$ANDROID_VERSION\" is not found in the list or not supported! Support only version 5.0.1, 5.1.1, 6.0, 7.0, 7.1.1"
+        echo "Android version \"$ANDROID_VERSION\" is not found in the list or not supported! Support only version 5.0.1, 5.1.1, 6.0, 7.0, 7.1.1, 8.0, 8.1"
         exit 1
     fi
 
     echo "Android versions: ${versions[@]}"
 }
 
-function get_processors() {
-    processors=()
-
-    if [ "$PROCESSOR" == "all" ]; then
-        for key in "${!list_of_processors[@]}"; do
-            processors+=($key)
-        done
-    else
-        for key in "${!list_of_processors[@]}"; do
-            if [[ $key == *"$PROCESSOR"* ]]; then
-                processors+=($key)
-            fi
-        done
-    fi
-
-    # If version cannot be found in the list
-    if [ -z "$processors" ]; then
-        echo "Invalid processor \"$PROCESSOR\"! Valid options: x86, arm"
-        exit 1
-    fi
-
-    echo "Processors: ${processors[@]}"
-}
-
 get_android_versions
-get_processors
+processor=x86
+#chrome_driver=$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE)
+#Reason: https://sites.google.com/a/chromium.org/chromedriver/downloads
+chrome_driver=2.33
 
 function test() {
     # Prepare needed parameter to run tests
     test_android_version=7.1.1
     test_api_level=25
     test_processor=x86
-    test_sys_img=x86_64
+    test_sys_img=$test_processor
     test_img_type=google_apis
     test_browser=chrome
     test_image=test_img
@@ -152,54 +122,46 @@ function build() {
     # Remove pyc files
     find . -name "*.pyc" -exec rm -f {} \;
 
-    # Build docker image(s)
-    for p in "${processors[@]}"; do
-        if [ "$p" == "x86" ]; then
-            FILE_NAME=docker/Emulator_x86
-        else
-            FILE_NAME=docker/Emulator_arm
-        fi
+    # Build docker image
+    FILE_NAME=docker/Emulator_x86
 
-        for v in "${versions[@]}"; do
-            # Find image type and default web browser
-            if [ "$v" == "5.0.1" ] || [ "$v" == "5.1.1" ]; then
-                IMG_TYPE=default
-                BROWSER=browser
-            elif [ "$v" == "6.0" ]; then
-                # It is because there is no ARM EABI v7a System Image for 6.0
-                IMG_TYPE=google_apis
-                BROWSER=browser
-            else
-                IMG_TYPE=google_apis
-                BROWSER=chrome
-            fi
-            echo "[BUILD] IMAGE TYPE: $IMG_TYPE"
-            level=${list_of_levels[$v]}
-            echo "[BUILD] API Level: $level"
-            sys_img=${list_of_processors[$p]}
-            echo "[BUILD] System Image: $sys_img"
-            image_version="$IMAGE-$p-$v:$RELEASE"
-            image_latest="$IMAGE-$p-$v:latest"
-            echo "[BUILD] Image name: $image_version and $image_latest"
-            echo "[BUILD] Dockerfile: $FILE_NAME"
-            docker build -t $image_version --build-arg ANDROID_VERSION=$v --build-arg API_LEVEL=$level \
-            --build-arg PROCESSOR=$p --build-arg SYS_IMG=$sys_img --build-arg IMG_TYPE=$IMG_TYPE \
-            --build-arg BROWSER=$BROWSER -f $FILE_NAME .
-            docker tag $image_version $image_latest
-        done
+    for v in "${versions[@]}"; do
+        # Find image type and default web browser
+        if [ "$v" == "5.0.1" ] || [ "$v" == "5.1.1" ]; then
+            IMG_TYPE=default
+            BROWSER=browser
+        elif [ "$v" == "6.0" ]; then
+            # It is because there is no ARM EABI v7a System Image for 6.0
+            IMG_TYPE=google_apis
+            BROWSER=browser
+        else
+            IMG_TYPE=google_apis_playstore
+            BROWSER=chrome
+        fi
+        echo "[BUILD] IMAGE TYPE: $IMG_TYPE"
+        level=${list_of_levels[$v]}
+        echo "[BUILD] API Level: $level"
+        sys_img=$processor
+        echo "[BUILD] System Image: $sys_img"
+        image_version="$IMAGE-$processor-$v:$RELEASE"
+        image_latest="$IMAGE-$processor-$v:latest"
+        echo "[BUILD] Image name: $image_version and $image_latest"
+        echo "[BUILD] Dockerfile: $FILE_NAME"
+        docker build -t $image_version --build-arg ANDROID_VERSION=$v --build-arg API_LEVEL=$level \
+        --build-arg PROCESSOR=$processor --build-arg SYS_IMG=$sys_img --build-arg IMG_TYPE=$IMG_TYPE \
+        --build-arg BROWSER=$BROWSER --build-arg CHROME_DRIVER=$chrome_driver -f $FILE_NAME .
+        docker tag $image_version $image_latest
     done
 }
 
 function push() {
     # Push docker image(s)
-    for p in "${processors[@]}"; do
-        for v in "${versions[@]}"; do
-            image_version="$IMAGE-$p-$v:$RELEASE"
-            image_latest="$IMAGE-$p-$v:latest"
-            echo "[PUSH] Image name: $image_version and $image_latest"
-            docker push $image_version
-            docker push $image_latest
-        done
+    for v in "${versions[@]}"; do
+        image_version="$IMAGE-$processor-$v:$RELEASE"
+        image_latest="$IMAGE-$processor-$v:latest"
+        echo "[PUSH] Image name: $image_version and $image_latest"
+        docker push $image_version
+        docker push $image_latest
     done
 }
 
